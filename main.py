@@ -61,7 +61,7 @@ class PreviewCanvas(tk.Canvas):
         self.cx = size // 2
         self.cy = size // 2
 
-    def redraw(self, values):
+    def redraw(self, values, baum_nr=''):
         self.delete('all')
         if not values or any(v <= 0 for v in values):
             return
@@ -89,16 +89,21 @@ class PreviewCanvas(tk.Canvas):
         flat = [c for p in poly for c in p]
         self.create_polygon(flat, fill=GREEN, outline=DGREEN, width=2, smooth=False)
 
-        # Punkte
-        for x, y in pts:
-            r = 4
-            self.create_oval(x-r, y-r, x+r, y+r, fill=DGREEN, outline='white', width=1)
+        # Mittelpunkt
+        r = 2
+        self.create_oval(self.cx-r, self.cy-r, self.cx+r, self.cy+r,
+                         fill='black', outline='black')
 
         # Labels
         for d, v, lbl in zip(DIRS, values, LBLS):
             x, y = polar_to_xy(self.cx, self.cy, d, v/max_v*radius + 18)
             self.create_text(x, y, text=f'{lbl}\n{v:.3g}',
                              font=('Helvetica', 7, 'bold'), fill='#333', justify='center')
+
+        # Baum-Nummer direkt im Diagramm
+        if baum_nr:
+            self.create_text(self.cx, self.cy + 16, text=str(baum_nr),
+                             font=('Helvetica', 10, 'bold'), fill='#1a1a1a')
 
 
 # ── PDF ───────────────────────────────────────────────────────────────────────
@@ -149,12 +154,9 @@ def generate_pdf(values, title, output_path):
     path.close()
     c.drawPath(path, fill=1, stroke=1)
 
-    # Datenpunkte
-    c.setFillColor(STROKE)
-    c.setStrokeColor(HexColor('#ffffff'))
-    c.setLineWidth(1.5)
-    for p in pts:
-        c.circle(p[0], p[1], 4, fill=1, stroke=1)
+    # Mittelpunkt (kleiner schwarzer Punkt)
+    c.setFillColor(HexColor('#000000'))
+    c.circle(cx, cy, 2, fill=1, stroke=0)
 
     # Labels
     for deg, val, lbl in zip(DIRS, values, LBLS):
@@ -168,10 +170,12 @@ def generate_pdf(values, title, output_path):
         c.setFont('Helvetica', 9)
         c.drawCentredString(lx, ly - 7, str(val))
 
-    # Titel
+    # Baum-Nummer oben als Bezeichnung, Nummer direkt im Diagramm
     c.setFillColor(HexColor('#1a1a1a'))
-    c.setFont('Helvetica-Bold', 18)
-    c.drawCentredString(cx, ph - 65, title)
+    c.setFont('Helvetica-Bold', 14)
+    c.drawCentredString(cx, ph - 65, 'Baum-Nummer')
+    c.setFont('Helvetica-Bold', 16)
+    c.drawCentredString(cx, cy - 22, title)
 
     c.save()
 
@@ -202,12 +206,13 @@ class App(tk.Tk):
         tk.Label(left, text='Werte für die 8 Himmelsrichtungen eingeben',
                  bg='#f5f7f5', fg='#666', font=('Helvetica', 9)).pack(anchor='w', pady=(2, 12))
 
-        # Diagramm-Titel
+        # Baum-Nummer
         tf = tk.Frame(left, bg='#f5f7f5')
         tf.pack(fill='x', pady=(0, 12))
-        tk.Label(tf, text='Diagramm-Titel:', bg='#f5f7f5',
+        tk.Label(tf, text='Baum-Nummer:', bg='#f5f7f5',
                  font=('Helvetica', 9, 'bold'), fg='#333').pack(anchor='w')
-        self.title_var = tk.StringVar(value='Richtungsdiagramm')
+        self.title_var = tk.StringVar(value='')
+        self.title_var.trace_add('write', lambda *_: self._update_preview())
         ttk.Entry(tf, textvariable=self.title_var, width=28,
                   font=('Helvetica', 10)).pack(fill='x')
 
@@ -220,10 +225,12 @@ class App(tk.Tk):
                      fg='#3a8a36', font=('Helvetica', 12)).pack(side='left')
             tk.Label(row, text=lbl, width=11, anchor='w', bg='#f5f7f5',
                      font=('Helvetica', 10, 'bold'), fg='#333').pack(side='left')
-            var = tk.StringVar(value=str(default))
+            var = tk.StringVar(value=f'{default:.1f}')
             var.trace_add('write', lambda *_: self._update_preview())
-            ttk.Entry(row, textvariable=var, width=10,
-                      font=('Helvetica', 10)).pack(side='left', padx=4)
+            sb = ttk.Spinbox(row, from_=0.1, to=99.0, increment=0.1,
+                             textvariable=var, width=8,
+                             font=('Helvetica', 10), format='%.1f')
+            sb.pack(side='left', padx=4)
             self.vars.append(var)
 
         tk.Button(left, text='📄  PDF speichern',
@@ -261,7 +268,7 @@ class App(tk.Tk):
     def _update_preview(self):
         v = self._values()
         if v:
-            self.preview.redraw(v)
+            self.preview.redraw(v, self.title_var.get())
 
     def _save(self):
         values = self._values()
@@ -277,7 +284,7 @@ class App(tk.Tk):
         if not path:
             return
         try:
-            generate_pdf(values, self.title_var.get() or 'Richtungsdiagramm', path)
+            generate_pdf(values, self.title_var.get(), path)
             self.status.config(text=f'✓ Gespeichert:\n{path}')
         except Exception as e:
             messagebox.showerror('Fehler', str(e))
